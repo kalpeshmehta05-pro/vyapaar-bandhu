@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from app.models.base import Base
 from app.core.database import engine
 from app.routes.gstin import router as gstin_router
+from app.routes.compliance import router as compliance_router
+
 
 app = FastAPI(
     title="VyapaarBandhu",
@@ -10,6 +12,7 @@ app = FastAPI(
 )
 
 app.include_router(gstin_router)
+app.include_router(compliance_router)
 
 @app.on_event("startup")
 def startup():
