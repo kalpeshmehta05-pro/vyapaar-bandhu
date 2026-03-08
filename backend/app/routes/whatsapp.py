@@ -36,7 +36,6 @@ FIELD_LABELS = {
 
 
 def send_whatsapp_message(to: str, body: str):
-    """Send a WhatsApp message via Twilio REST API."""
     client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
     client.messages.create(
         from_="whatsapp:+14155238886",
@@ -91,14 +90,12 @@ async def whatsapp_webhook(
     print(f"🖼️  Media count: {NumMedia}")
 
     if int(NumMedia) > 0 and "image" in MediaContentType0:
-        # Respond INSTANTLY to Twilio — then process in background thread
         threading.Thread(
             target=process_image_background,
             args=(MediaUrl0, From),
             daemon=True
         ).start()
 
-        # Immediate reply so Twilio gets response in < 1 second
         response = MessagingResponse()
         response.message("Photo mil gayi! Processing kar raha hoon... (10-20 seconds)")
         return PlainTextResponse(str(response), media_type="application/xml")
@@ -114,7 +111,6 @@ async def whatsapp_webhook(
 
 
 def process_image_background(media_url: str, sender: str):
-    """Runs in background thread — does OCR then sends result via Twilio REST API."""
     try:
         from app.services.ocr_service import extract_text_from_image_url
         from app.services.gstin_validator import validate_gstin
@@ -251,9 +247,10 @@ def process_confirmed_invoice(sender: str) -> str:
         (fields["igst"]["value"]  or 0)
     )
 
-    # TODO Week 5: save_invoice_to_db(sender, fields)
+    from app.services.invoice_service import save_invoice
+    db_result = save_invoice(sender, fields)
 
-    msg = "Invoice save ho gayi!\n\n"
+    msg = "Invoice save ho gayi! ✅\n\n"
     if fields["invoice_no"]["value"]:
         msg += f"Invoice: {fields['invoice_no']['value']}\n"
     if fields["invoice_date"]["value"]:
@@ -261,8 +258,11 @@ def process_confirmed_invoice(sender: str) -> str:
     if fields["total_amount"]["value"]:
         msg += f"Total: Rs.{fields['total_amount']['value']}\n"
     if total_tax > 0:
-        msg += f"\nITC Add Hua: Rs.{total_tax}\nYeh amount aapke GST ledger mein add ho gaya!"
+        msg += f"\n💰 ITC Mila: Rs.{round(total_tax, 2)}\n"
+    if db_result.get("success"):
+        msg += f"📊 Is Mahine Ka Total ITC: Rs.{db_result['itc_total']}\n"
+        msg += f"📄 Invoice ID: #{db_result['invoice_id']}"
     else:
-        msg += "\nNote: Is invoice mein koi ITC eligible tax nahi mila."
-    msg += "\n\nAur invoices bhejte rahein!"
+        msg += f"\n⚠️ DB save mein error: {db_result.get('error', 'unknown')}"
+    msg += "\n\nAur invoices bhejte rahein! 📄"
     return msg
