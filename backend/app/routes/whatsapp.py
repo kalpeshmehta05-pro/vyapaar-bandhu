@@ -300,16 +300,31 @@ def process_confirmed_invoice(sender: str) -> str:
     data   = PENDING_CONFIRMATIONS.pop(sender)
     fields = data["fields"]
 
+    # ── Duplicate check before saving ────────────────────────────────────────
+    from app.services.invoice_service import check_duplicate_invoice
+    dup = check_duplicate_invoice(sender, fields)
+    if dup["is_duplicate"]:
+        invoice_no = fields.get("invoice_no", {}).get("value") or "Unknown"
+        return (
+            f"⚠️ Duplicate Invoice Detected!\n\n"
+            f"Invoice {invoice_no} pehle se save hai.\n"
+            f"📄 Invoice ID: #{dup['existing_id']}\n"
+            f"📅 Saved on: {dup['existing_date']}\n\n"
+            f"Yeh invoice dobara save nahi hoga.\n"
+            f"Agar galti se aaya hai to apne CA se contact karein.\n"
+            f"Naya invoice bhejiye! 📄"
+        )
+
     # Fix: inter-state (IGST only) vs intra-state (CGST + SGST)
     igst = fields["igst"]["value"] or 0
     cgst = fields["cgst"]["value"] or 0
     sgst = fields["sgst"]["value"] or 0
 
     if igst > 0:
-        total_tax = igst           # inter-state transaction — IGST only
+        total_tax = igst
         tax_type  = f"IGST: Rs.{igst}"
     else:
-        total_tax = cgst + sgst    # intra-state transaction
+        total_tax = cgst + sgst
         tax_type  = f"CGST: Rs.{cgst} + SGST: Rs.{sgst}"
 
     from app.services.invoice_service import save_invoice

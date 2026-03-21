@@ -20,6 +20,53 @@ def get_or_create_user(phone: str) -> User:
         db.close()
 
 
+def check_duplicate_invoice(phone: str, fields: dict) -> dict:
+    """
+    Check if this invoice already exists for this user.
+    Match on: invoice_no + seller_gstin (both must match).
+    Returns: {"is_duplicate": True/False, "existing_id": int, "existing_date": str}
+    """
+    phone = phone.replace("whatsapp:+91", "").replace("whatsapp:+", "").replace("whatsapp:", "")[:15]
+    invoice_no   = (fields.get("invoice_no",   {}).get("value") or "").strip()
+    seller_gstin = (fields.get("seller_gstin", {}).get("value") or "").strip()
+
+    # Can't detect duplicate without at least invoice number
+    if not invoice_no:
+        return {"is_duplicate": False}
+
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.phone == phone).first()
+        if not user:
+            return {"is_duplicate": False}
+
+        query = db.query(Invoice).filter(
+            Invoice.user_id    == user.id,
+            Invoice.invoice_no == invoice_no
+        )
+
+        # If GSTIN also available, match on both for stronger check
+        if seller_gstin:
+            query = query.filter(Invoice.seller_gstin == seller_gstin)
+
+        existing = query.first()
+
+        if existing:
+            existing_date = existing.date.strftime("%d-%m-%Y") if existing.date else "unknown date"
+            print(f"⚠️ Duplicate detected: Invoice #{invoice_no} already saved as ID={existing.id}")
+            return {
+                "is_duplicate": True,
+                "existing_id":   existing.id,
+                "existing_date": existing_date,
+                "existing_total": round((existing.cgst or 0) + (existing.sgst or 0) + (existing.igst or 0), 2)
+            }
+
+        return {"is_duplicate": False}
+
+    finally:
+        db.close()
+
+
 def save_invoice(phone: str, fields: dict) -> dict:
     phone = phone.replace("whatsapp:+91", "").replace("whatsapp:+", "").replace("whatsapp:", "")[:15]
     db: Session = SessionLocal()
@@ -44,7 +91,7 @@ def save_invoice(phone: str, fields: dict) -> dict:
         invoice = Invoice(
             user_id      = user.id,
             seller_gstin = (fields.get("seller_gstin", {}).get("value") or "")[:15] or None,
-            invoice_no   = (fields.get("invoice_no", {}).get("value") or "")[:100] or None,
+            invoice_no   = (fields.get("invoice_no",   {}).get("value") or "")[:100] or None,
             date         = date_val,
             taxable_amt  = fields.get("taxable_amount", {}).get("value") or 0,
             cgst         = fields.get("cgst", {}).get("value") or 0,
@@ -57,12 +104,16 @@ def save_invoice(phone: str, fields: dict) -> dict:
         db.refresh(invoice)
         print(f"✅ Invoice saved: ID={invoice.id}")
 
-        itc_amount = (invoice.cgst or 0) + (invoice.sgst or 0) + (invoice.igst or 0)
+        # Fix: inter-state (IGST only) vs intra-state (CGST + SGST)
+        igst = invoice.igst or 0
+        cgst = invoice.cgst or 0
+        sgst = invoice.sgst or 0
+        itc_amount = igst if igst > 0 else (cgst + sgst)
 
         period = datetime.utcnow().strftime("%Y-%m")
         ledger = db.query(GSTLedger).filter(
             GSTLedger.user_id == user.id,
-            GSTLedger.period == period
+            GSTLedger.period  == period
         ).first()
 
         if not ledger:
@@ -76,7 +127,7 @@ def save_invoice(phone: str, fields: dict) -> dict:
             db.add(ledger)
 
         ledger.total_purchases = (ledger.total_purchases or 0) + (invoice.taxable_amt or 0)
-        ledger.itc_available   = (ledger.itc_available or 0) + itc_amount
+        ledger.itc_available   = (ledger.itc_available   or 0) + itc_amount
         db.commit()
 
         print(f"✅ ITC updated: +Rs.{itc_amount} | Total ITC: Rs.{ledger.itc_available}")
@@ -107,7 +158,7 @@ def get_itc_balance(phone: str) -> dict:
         period = datetime.utcnow().strftime("%Y-%m")
         ledger = db.query(GSTLedger).filter(
             GSTLedger.user_id == user.id,
-            GSTLedger.period == period
+            GSTLedger.period  == period
         ).first()
 
         invoice_count = db.query(Invoice).filter(
