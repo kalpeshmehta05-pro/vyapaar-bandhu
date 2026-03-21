@@ -45,6 +45,23 @@ def send_whatsapp_message(to: str, body: str):
     print(f"📤 Sent to {to}: {body[:80]}...")
 
 
+def _get_gstin_status(fields: dict) -> str:
+    """Validate GSTIN and auto-correct if needed. Updates field in place."""
+    gstin_val = fields.get("seller_gstin", {}).get("value")
+    if not gstin_val:
+        return ""
+    from app.services.gstin_validator import validate_gstin
+    validation = validate_gstin(gstin_val)
+    if validation["is_valid"]:
+        if validation.get("auto_corrected"):
+            fields["seller_gstin"]["value"] = validation["gstin"]
+            return f"✅ Auto-corrected: {validation['gstin']} ({validation['state_name']})"
+        else:
+            return f"Valid ({validation['state_name']})"
+    else:
+        return "Invalid GSTIN - ITC risk!"
+
+
 def build_confirmation_message(fields: dict, gstin_status: str) -> str:
     msg = "Invoice details mili! Confirm karein:\n"
     msg += "--------------------\n"
@@ -77,7 +94,6 @@ def build_confirmation_message(fields: dict, gstin_status: str) -> str:
 
 
 def get_monthly_summary(sender: str) -> str:
-    """Generate monthly GST summary for the user."""
     from app.core.database import SessionLocal
     from app.models.base import User, Invoice, GSTLedger
     from app.services.compliance_engine import get_filing_deadlines
@@ -94,14 +110,12 @@ def get_monthly_summary(sender: str) -> str:
         if not user:
             return "Koi data nahi mila. Pehle invoice bhejiye!"
 
-        # All invoices this month
         month_start = datetime(now.year, now.month, 1)
         invoices = db.query(Invoice).filter(
             Invoice.user_id == user.id,
             Invoice.date    >= month_start
         ).all()
 
-        # Ledger
         ledger = db.query(GSTLedger).filter(
             GSTLedger.user_id == user.id,
             GSTLedger.period  == period
@@ -110,47 +124,37 @@ def get_monthly_summary(sender: str) -> str:
         total_invoices  = len(invoices)
         total_purchases = sum(inv.taxable_amt or 0 for inv in invoices)
         total_itc       = round(ledger.itc_available if ledger else 0, 2)
+        blocked_count   = sum(1 for inv in invoices if inv.status == "blocked")
 
-        # Count blocked invoices
-        blocked_count = sum(1 for inv in invoices if inv.status == "blocked")
-
-        # Deadlines
         deadlines     = get_filing_deadlines(period)
         days_to_3b    = deadlines.get("days_to_gstr3b", 0)
         days_to_gstr1 = deadlines.get("days_to_gstr1", 0)
         gstr3b_date   = deadlines.get("gstr3b_deadline", "20th")
         gstr1_date    = deadlines.get("gstr1_deadline", "11th")
-
         urgency = "🔴" if days_to_3b <= 3 else "🟡" if days_to_3b <= 7 else "🟢"
 
-        msg  = f"📊 GST Monthly Report\n"
-        msg += f"📅 {month_name}\n"
+        msg  = f"📊 GST Monthly Report\n📅 {month_name}\n"
         msg += "================================\n\n"
-        msg += f"📄 Invoices Upload: {total_invoices}\n"
+        msg += f"📄 Invoices: {total_invoices}\n"
         msg += f"🛒 Total Purchases: Rs.{total_purchases:,.2f}\n"
-        msg += f"💰 ITC Claimable:   Rs.{total_itc:,.2f}\n"
+        msg += f"💰 ITC Claimable: Rs.{total_itc:,.2f}\n"
         if blocked_count > 0:
-            msg += f"⚠️ Blocked Invoices: {blocked_count} (Sec 17(5))\n"
+            msg += f"⚠️ Blocked: {blocked_count} (Sec 17(5))\n"
         msg += f"\n{urgency} Deadlines:\n"
         msg += f"  GSTR-1:  {gstr1_date} ({days_to_gstr1} din baaki)\n"
         msg += f"  GSTR-3B: {gstr3b_date} ({days_to_3b} din baaki)\n"
-
         if days_to_3b <= 3:
             msg += f"\n🚨 URGENT! Sirf {days_to_3b} din bacha hai!\n"
-            msg += "Apne CA se abhi contact karein!\n"
         elif days_to_3b <= 7:
-            msg += f"\n⚠️ {days_to_3b} din baaki — baaki invoices jaldi bhejiye!\n"
+            msg += f"\n⚠️ {days_to_3b} din baaki — jaldi bhejiye!\n"
         else:
-            msg += f"\n✅ {days_to_3b} din baaki — sab theek chal raha hai!\n"
-
-        msg += "================================\n"
-        msg += "Aur invoices bhejte rahein! 📄"
-
+            msg += f"\n✅ {days_to_3b} din baaki — sab theek!\n"
+        msg += "================================\nAur invoices bhejte rahein! 📄"
         return msg
 
     except Exception as e:
         print(f"❌ Summary error: {e}")
-        return "Summary generate karne mein error aaya. Dobara try karein."
+        return "Summary generate karne mein error aaya."
     finally:
         db.close()
 
@@ -169,21 +173,13 @@ async def whatsapp_webhook(
     print(f"🖼️  Media count: {NumMedia}")
 
     if int(NumMedia) > 0 and "image" in MediaContentType0:
-        threading.Thread(
-            target=process_image_background,
-            args=(MediaUrl0, From),
-            daemon=True
-        ).start()
+        threading.Thread(target=process_image_background, args=(MediaUrl0, From), daemon=True).start()
         response = MessagingResponse()
         response.message("Photo mil gayi! Processing kar raha hoon... (10-20 seconds)")
         return PlainTextResponse(str(response), media_type="application/xml")
 
     elif int(NumMedia) > 0 and "pdf" in MediaContentType0.lower():
-        threading.Thread(
-            target=process_pdf_background,
-            args=(MediaUrl0, From),
-            daemon=True
-        ).start()
+        threading.Thread(target=process_pdf_background, args=(MediaUrl0, From), daemon=True).start()
         response = MessagingResponse()
         response.message("Bank statement mil gaya! Parse kar raha hoon... (15-20 seconds) 🏦")
         return PlainTextResponse(str(response), media_type="application/xml")
@@ -201,7 +197,6 @@ async def whatsapp_webhook(
 def process_image_background(media_url: str, sender: str):
     try:
         from app.services.ocr_service import extract_text_from_image_url
-        from app.services.gstin_validator import validate_gstin
 
         TWILIO_SID   = os.getenv("TWILIO_ACCOUNT_SID")
         TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
@@ -216,19 +211,12 @@ def process_image_background(media_url: str, sender: str):
         filled = [k for k, v in fields.items() if v["value"] is not None]
 
         if len(filled) == 0:
-            send_whatsapp_message(sender, "Invoice mein koi data nahi mila. Seedha, achhi roshni mein photo lein.")
+            send_whatsapp_message(sender, "Invoice mein koi data nahi mila. Seedha photo lein.")
             return
 
-        gstin_status = ""
-        if fields["seller_gstin"]["value"]:
-            validation = validate_gstin(fields["seller_gstin"]["value"])
-            gstin_status = f"Valid ({validation['state_name']})" if validation["is_valid"] else "Invalid GSTIN - ITC risk!"
+        gstin_status = _get_gstin_status(fields)
 
-        PENDING_CONFIRMATIONS[sender] = {
-            "fields": fields,
-            "awaiting_edit": None
-        }
-
+        PENDING_CONFIRMATIONS[sender] = {"fields": fields, "awaiting_edit": None}
         msg = build_confirmation_message(fields, gstin_status)
         send_whatsapp_message(sender, msg)
 
@@ -245,25 +233,18 @@ def process_pdf_background(media_url: str, sender: str):
         TWILIO_SID   = os.getenv("TWILIO_ACCOUNT_SID")
         TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 
-        print(f"📥 Downloading PDF from Twilio...")
         response = req.get(media_url, auth=(TWILIO_SID, TWILIO_TOKEN), timeout=30)
-
         if response.status_code != 200:
             send_whatsapp_message(sender, "PDF download nahi hua. Dobara bhejiye.")
             return
 
-        pdf_bytes = response.content
-        print(f"✅ PDF downloaded: {len(pdf_bytes)} bytes")
-
-        result = parse_bank_statement_from_bytes(pdf_bytes)
-
+        result = parse_bank_statement_from_bytes(response.content)
         if not result["success"]:
             send_whatsapp_message(sender, f"PDF parse nahi hua: {result['error']}")
             return
 
         txns = result["transactions"]
         bank = result["bank"]
-
         msg  = f"🏦 {bank} Bank Statement Parse Ho Gayi!\n\n"
         msg += f"📊 Total Transactions: {result['total_transactions']}\n"
         msg += f"💸 Total Debit: Rs.{result['total_debit']:,.2f}\n"
@@ -276,14 +257,13 @@ def process_pdf_background(media_url: str, sender: str):
             for t in itc_txns:
                 msg += f"• {t['date']} — {t['description'][:30]} — Rs.{t['amount']:,.0f}\n"
 
-        msg += f"\n💡 Tip: In {result['itc_possible_count']} transactions pe ITC claim ho sakta hai!"
+        msg += f"\n💡 {result['itc_possible_count']} transactions pe ITC claim ho sakta hai!"
         msg += "\nInvoices upload karke exact ITC calculate karein 📄"
-
         send_whatsapp_message(sender, msg)
 
     except Exception as e:
         print(f"❌ PDF processing error: {e}")
-        send_whatsapp_message(sender, "PDF process karne mein error aaya. Dobara bhejiye.")
+        send_whatsapp_message(sender, "PDF process karne mein error aaya.")
 
 
 def handle_text(body: str, sender: str) -> str:
@@ -291,56 +271,37 @@ def handle_text(body: str, sender: str) -> str:
     session = PENDING_CONFIRMATIONS.get(sender)
 
     if session and session.get("awaiting_edit"):
-        field_name = session["awaiting_edit"]
-        return apply_field_edit(sender, field_name, body.strip())
+        return apply_field_edit(sender, session["awaiting_edit"], body.strip())
 
     if session:
         if any(w in body_lower for w in ["yes", "haan", "ha", "correct", "sahi", "ok", "okay"]):
             return process_confirmed_invoice(sender)
-
         if any(w in body_lower for w in ["nahi", "cancel", "galat", "wrong", "no"]):
             del PENDING_CONFIRMATIONS[sender]
             return "Invoice cancel kar diya. Dobara photo bhejein."
-
         if body_lower.startswith("edit "):
             keyword = body_lower.replace("edit ", "").strip()
             field_name = FIELD_ALIASES.get(keyword)
             if field_name:
                 session["awaiting_edit"] = field_name
-                label = FIELD_LABELS[field_name]
-                return f"Sahi {label} enter karein:"
+                return f"Sahi {FIELD_LABELS[field_name]} enter karein:"
             else:
-                return (
-                    "Kaunsa field badalna hai? Example:\n"
-                    "'edit date'\n'edit gstin'\n'edit total'\n'edit cgst'"
-                )
+                return "Kaunsa field badalna hai? Example:\n'edit date'\n'edit gstin'\n'edit total'"
+        return "Pending invoice hai. Reply karein:\n'yes' -> Save\n'no' -> Cancel\n'edit date' -> Field badlein"
 
-        return (
-            "Pending invoice hai. Reply karein:\n"
-            "'yes' -> Save\n'no' -> Cancel\n'edit date' -> Field badlein"
-        )
-
-    # ── Monthly Summary ───────────────────────────────────────────────────────
-    if any(w in body_lower for w in ["summary", "report", "kitna itc", "total itc",
-                                      "mahina", "monthly", "month", "sara", "sab"]):
+    if any(w in body_lower for w in ["summary", "report", "kitna itc", "total itc", "mahina", "monthly"]):
         return get_monthly_summary(sender)
-
-    # ── Greetings ─────────────────────────────────────────────────────────────
     elif any(w in body_lower for w in ["hello", "hi", "namaste", "helo", "hey"]):
         return (
             "Namaste! VyapaarBandhu mein swagat hai! 🙏\n\n"
             "1. Invoice ki photo bhejiye -> ITC calculate\n"
             "2. Bank PDF bhejiye -> transactions parse\n"
-            "3. 'summary' -> is mahine ka poora report\n"
+            "3. 'summary' -> monthly report\n"
             "4. 'deadline' -> filing dates\n"
             "5. 'help' -> sab commands"
         )
-
-    # ── Tax query — redirect to summary ──────────────────────────────────────
     elif any(w in body_lower for w in ["tax", "gst", "kitna", "liability", "bharna"]):
         return get_monthly_summary(sender)
-
-    # ── Deadlines ─────────────────────────────────────────────────────────────
     elif any(w in body_lower for w in ["deadline", "date", "last date", "due", "filing"]):
         from app.services.compliance_engine import get_filing_deadlines
         from datetime import datetime
@@ -351,11 +312,8 @@ def handle_text(body: str, sender: str) -> str:
         return (
             f"📅 Filing Deadlines:\n\n"
             f"GSTR-1:  {deadlines['gstr1_deadline']} ({deadlines['days_to_gstr1']} din baaki)\n"
-            f"GSTR-3B: {deadlines['gstr3b_deadline']} ({days_3b} din baaki) {urgency}\n\n"
-            f"'summary' likhiye poori details ke liye."
+            f"GSTR-3B: {deadlines['gstr3b_deadline']} ({days_3b} din baaki) {urgency}"
         )
-
-    # ── Help ──────────────────────────────────────────────────────────────────
     elif any(w in body_lower for w in ["help", "madad", "commands"]):
         return (
             "VyapaarBandhu Commands:\n\n"
@@ -363,16 +321,10 @@ def handle_text(body: str, sender: str) -> str:
             "🏦 Bank PDF -> transactions parse\n"
             "📊 'summary' -> monthly report\n"
             "📅 'deadline' -> filing dates\n"
-            "❓ 'help' -> yeh message\n\n"
-            "Koi bhi invoice photo bhejiye shuru karne ke liye!"
+            "❓ 'help' -> yeh message"
         )
-
     else:
-        return (
-            "'hello' likhiye shuru karne ke liye\n"
-            "'summary' likhiye monthly report ke liye\n"
-            "Ya invoice ki photo bhejiye!"
-        )
+        return "'hello' likhiye shuru karne ke liye\n'summary' -> monthly report\nYa invoice ki photo bhejiye!"
 
 
 def apply_field_edit(sender: str, field_name: str, new_value: str) -> str:
@@ -391,12 +343,7 @@ def apply_field_edit(sender: str, field_name: str, new_value: str) -> str:
     fields[field_name] = {"value": new_value, "confidence": 1.0}
     print(f"✏️  Field edited: {field_name} = {new_value}")
 
-    gstin_status = ""
-    if fields["seller_gstin"]["value"]:
-        from app.services.gstin_validator import validate_gstin
-        validation = validate_gstin(fields["seller_gstin"]["value"])
-        gstin_status = f"Valid ({validation['state_name']})" if validation["is_valid"] else "Invalid GSTIN - ITC risk!"
-
+    gstin_status = _get_gstin_status(fields)
     label = FIELD_LABELS[field_name]
     msg  = f"{label} update ho gaya: {new_value}\n\n"
     msg += build_confirmation_message(fields, gstin_status)
@@ -410,7 +357,6 @@ def process_confirmed_invoice(sender: str) -> str:
     data   = PENDING_CONFIRMATIONS.pop(sender)
     fields = data["fields"]
 
-    # ── Duplicate check before saving ────────────────────────────────────────
     from app.services.invoice_service import check_duplicate_invoice
     dup = check_duplicate_invoice(sender, fields)
     if dup["is_duplicate"]:
@@ -420,12 +366,9 @@ def process_confirmed_invoice(sender: str) -> str:
             f"Invoice {invoice_no} pehle se save hai.\n"
             f"📄 Invoice ID: #{dup['existing_id']}\n"
             f"📅 Saved on: {dup['existing_date']}\n\n"
-            f"Yeh invoice dobara save nahi hoga.\n"
-            f"Agar galti se aaya hai to apne CA se contact karein.\n"
-            f"Naya invoice bhejiye! 📄"
+            f"Yeh invoice dobara save nahi hoga.\nNaya invoice bhejiye! 📄"
         )
 
-    # Fix: inter-state (IGST only) vs intra-state (CGST + SGST)
     igst = fields["igst"]["value"] or 0
     cgst = fields["cgst"]["value"] or 0
     sgst = fields["sgst"]["value"] or 0

@@ -18,9 +18,27 @@ def extract_text_from_image_url(image_url: str, twilio_sid: str, twilio_token: s
     if response.status_code != 200:
         return {"success": False, "error": "Could not download image"}
 
-    print(f"✅ Downloaded: {len(response.content)} bytes")
-    image_base64 = base64.b64encode(response.content).decode("utf-8")
+    image_bytes = response.content
+    print(f"✅ Downloaded: {len(image_bytes)} bytes")
 
+    # ── OpenCV Pre-processing ──────────────────────────────────────────
+    try:
+        from app.services.image_processor import preprocess_invoice_image, get_image_quality_score
+
+        quality = get_image_quality_score(image_bytes)
+        print(f"📊 Image quality score: {quality['score']}/100 | Issues: {quality.get('issues', [])}")
+
+        if quality.get("needs_preprocessing", True):
+            print(f"🔧 Preprocessing image (CLAHE + denoise + deskew + threshold)...")
+            image_bytes = preprocess_invoice_image(image_bytes)
+            print(f"✅ Preprocessed: {len(image_bytes)} bytes")
+        else:
+            print(f"✅ Image quality good — skipping preprocessing")
+
+    except Exception as e:
+        print(f"⚠️ OpenCV preprocessing skipped: {e}")
+
+    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
     return parse_invoice_with_openrouter(image_base64)
 
 
@@ -43,7 +61,7 @@ def parse_invoice_with_openrouter(image_base64: str) -> dict:
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_base64}"
+                        "url": f"data:image/png;base64,{image_base64}"
                     }
                 },
                 {
