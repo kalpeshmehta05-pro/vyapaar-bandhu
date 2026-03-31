@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════
+# VyapaarBandhu — Python Dependencies (Free-Only Stack)
+# ═══════════════════════════════════════════════════════════════
+
+# ── API Framework ──────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# ── Database (Async SQLAlchemy 2.0 + PostgreSQL) ───────────────
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30.0
+alembic>=1.14.0
+greenlet>=3.1.0
+
+# ── Redis ──────────────────────────────────────────────────────
+redis>=5.2.0
+
+# ── Celery + Redis broker + redbeat scheduler ─────────────────
+celery>=5.4.0
+celery-redbeat>=2.2.0
+
+# ── Auth (JWT RS256 + bcrypt) ──────────────────────────────────
+PyJWT[crypto]>=2.10.0
+bcrypt>=4.2.0
+cryptography>=44.0.0
+
+# ── OCR (free local) ──────────────────────────────────────────
+pytesseract>=0.3.13
+easyocr>=1.7.2
+Pillow>=11.0.0
+opencv-python-headless>=4.10.0
+
+# ── Classification (free local inference) ──────────────────────
+transformers>=4.47.0
+torch>=2.5.0
+sentencepiece>=0.2.0
+
+# ── PDF Generation ─────────────────────────────────────────────
+weasyprint>=63.0
+Jinja2>=3.1.4
+
+# ── S3-compatible storage (MinIO / Cloudflare R2) ─────────────
+boto3>=1.35.0
+
+# ── Structured Logging ────────────────────────────────────────
+structlog>=24.4.0
+
+# ── Error Tracking (Sentry/GlitchTip compatible) ──────────────
+sentry-sdk[fastapi]>=2.19.0
+
+# ── HTTP Client ────────────────────────────────────────────────
+httpx>=0.28.0
+
+# ── Utilities ──────────────────────────────────────────────────
+python-multipart>=0.0.18
+python-dotenv>=1.0.1
+
+# ── Testing ────────────────────────────────────────────────────
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+httpx>=0.28.0

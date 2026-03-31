@@ -1,169 +1,132 @@
-from fastapi import FastAPI
+"""
+VyapaarBandhu — FastAPI Application Factory
+Async, structured logging, correlation ID injection, CORS with explicit origins.
+"""
+
+import uuid
+from contextlib import asynccontextmanager
+
+import structlog
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from app.models.base import Base
-from app.core.database import engine
-from app.routes.gstin import router as gstin_router
-from app.routes.compliance import router as compliance_router
-from app.routes.whatsapp import router as whatsapp_router
-from app.routes.dashboard import router as dashboard_router
-from app.routes.auth import router as auth_router
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
-import os
+from starlette.middleware.base import BaseHTTPMiddleware
 
-app = FastAPI(
-    title="VyapaarBandhu",
-    description="AI GST Compliance Assistant for Indian Small Businesses",
-    version="0.1.0"
-)
+from app.config import settings
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(auth_router)
-app.include_router(gstin_router)
-app.include_router(compliance_router)
-app.include_router(whatsapp_router)
-app.include_router(dashboard_router)
+logger = structlog.get_logger()
 
 
-# ── APScheduler Deadline Alert Job ───────────────────────────────────────────
+# ── Correlation ID Middleware ──────────────────────────────────────────────
 
-def send_deadline_alerts():
-    from app.core.database import SessionLocal
-    from app.models.base import User, GSTLedger
-    from app.services.compliance_engine import get_filing_deadlines
-    from twilio.rest import Client
+class CorrelationIDMiddleware(BaseHTTPMiddleware):
+    """Inject a correlation ID into every request for distributed tracing."""
 
-    print(f"⏰ Running deadline alert job — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    async def dispatch(self, request: Request, call_next):
+        correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+        # Store in request state for downstream access
+        request.state.correlation_id = correlation_id
 
-    TWILIO_SID   = os.getenv("TWILIO_ACCOUNT_SID")
-    TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-    TWILIO_FROM  = "whatsapp:+14155238886"
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
 
-    if not TWILIO_SID or not TWILIO_TOKEN:
-        print("❌ Twilio credentials not found — skipping alerts")
-        return
-
-    period         = datetime.utcnow().strftime("%Y-%m")
-    deadlines      = get_filing_deadlines(period)
-    days_to_gstr1  = deadlines.get("days_to_gstr1", 999)
-    days_to_gstr3b = deadlines.get("days_to_gstr3b", 999)
-    gstr1_date     = deadlines.get("gstr1_deadline", "11th")
-    gstr3b_date    = deadlines.get("gstr3b_deadline", "20th")
-
-    alert_days          = {7, 3, 1}
-    should_alert_gstr1  = days_to_gstr1  in alert_days
-    should_alert_gstr3b = days_to_gstr3b in alert_days
-
-    if not should_alert_gstr1 and not should_alert_gstr3b:
-        print(f"📅 No alerts today — GSTR-1: {days_to_gstr1}d, GSTR-3B: {days_to_gstr3b}d")
-        return
-
-    db = SessionLocal()
-    try:
-        users = db.query(User).filter(User.phone.isnot(None)).all()
-        print(f"📋 Sending alerts to {len(users)} users...")
-        twilio_client = Client(TWILIO_SID, TWILIO_TOKEN)
-        sent_count = 0
-
-        for user in users:
-            phone = user.phone
-            if not phone:
-                continue
-            if not phone.startswith("+"):
-                phone = f"+91{phone}"
-            wa_to = f"whatsapp:{phone}"
-
-            ledger = db.query(GSTLedger).filter(
-                GSTLedger.user_id == user.id,
-                GSTLedger.period  == period
-            ).first()
-            itc_balance = round(ledger.itc_available if ledger else 0, 2)
-
-            messages = []
-
-            if should_alert_gstr1:
-                urgency = "🚨 URGENT!" if days_to_gstr1 == 1 else "⚠️" if days_to_gstr1 == 3 else "📅"
-                messages.append(
-                    f"{urgency} GSTR-1 Filing Reminder\n\n"
-                    f"Deadline: {gstr1_date}\n"
-                    f"Sirf {days_to_gstr1} din bacha hai!\n\n"
-                    f"💰 Aapka ITC this month: Rs.{itc_balance:,.2f}\n\n"
-                    f"Apne CA se abhi contact karein.\n"
-                    f"VyapaarBandhu 🤝"
-                )
-
-            if should_alert_gstr3b:
-                urgency = "🚨 URGENT!" if days_to_gstr3b == 1 else "⚠️" if days_to_gstr3b == 3 else "📅"
-                messages.append(
-                    f"{urgency} GSTR-3B Filing Reminder\n\n"
-                    f"Deadline: {gstr3b_date}\n"
-                    f"Sirf {days_to_gstr3b} din bacha hai!\n\n"
-                    f"💰 ITC Available: Rs.{itc_balance:,.2f}\n\n"
-                    f"{'Ab der mat karein! Penalty shuru hogi!' if days_to_gstr3b == 1 else 'Invoice upload karna baaki hai to abhi bhejiye!'}\n"
-                    f"VyapaarBandhu 🤝"
-                )
-
-            for msg_body in messages:
-                try:
-                    twilio_client.messages.create(from_=TWILIO_FROM, to=wa_to, body=msg_body)
-                    sent_count += 1
-                    print(f"📤 Alert sent to {phone}")
-                except Exception as e:
-                    print(f"❌ Failed to send to {phone}: {e}")
-
-        print(f"✅ Deadline alerts done — {sent_count} messages sent")
-
-    except Exception as e:
-        print(f"❌ Alert job error: {e}")
-    finally:
-        db.close()
+        response: Response = await call_next(request)
+        response.headers["X-Correlation-ID"] = correlation_id
+        return response
 
 
-scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
-scheduler.add_job(
-    send_deadline_alerts,
-    trigger="cron",
-    hour=9, minute=0,
-    id="deadline_alerts",
-    replace_existing=True,
-)
+# ── Request Logging Middleware ─────────────────────────────────────────────
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every request with method, path, status, and duration."""
+
+    async def dispatch(self, request: Request, call_next):
+        import time
+
+        start = time.monotonic()
+        response: Response = await call_next(request)
+        duration_ms = round((time.monotonic() - start) * 1000, 2)
+
+        logger.info(
+            "http.request",
+            method=request.method,
+            path=str(request.url.path),
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+        return response
 
 
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-    print("✅ All tables created / verified")
-    scheduler.start()
-    print("⏰ APScheduler started — 9:00 AM IST daily")
+# ── Structured Logging Configuration ──────────────────────────────────────
+
+def configure_logging():
+    """Configure structlog for JSON output. No print() allowed in production."""
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(
+            structlog.get_level_from_name(settings.LOG_LEVEL)
+        ),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
 
-@app.on_event("shutdown")
-def shutdown():
-    scheduler.shutdown()
+# ── Lifespan ──────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events."""
+    configure_logging()
+    logger.info("app.startup", env=settings.APP_ENV, version=settings.APP_VERSION)
+    yield
+    logger.info("app.shutdown")
 
 
-@app.get("/health")
-def health_check():
-    job = scheduler.get_job("deadline_alerts")
-    next_run = str(job.next_run_time) if job else "unknown"
-    return {
-        "status":         "alive",
-        "product":        "VyapaarBandhu",
-        "version":        "0.1.0",
-        "scheduler":      "running" if scheduler.running else "stopped",
-        "next_alert_run": next_run,
-    }
+# ── App Factory ───────────────────────────────────────────────────────────
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="VyapaarBandhu",
+        description="GST Document Management & Draft Preparation System for Indian SMEs",
+        version=settings.APP_VERSION,
+        lifespan=lifespan,
+        docs_url="/docs" if settings.DEBUG else None,
+        redoc_url="/redoc" if settings.DEBUG else None,
+    )
+
+    # ── Middleware (order matters — outermost first) ────────────────────
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
+    )
+    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(CorrelationIDMiddleware)
+
+    # ── Routes ─────────────────────────────────────────────────────────
+    from app.api.v1.router import api_v1_router
+    app.include_router(api_v1_router, prefix="/api/v1")
+
+    # ── Health checks ──────────────────────────────────────────────────
+    @app.get("/health/live", tags=["Health"])
+    async def liveness():
+        return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["Health"])
+    async def readiness():
+        # TODO: Check DB + Redis connectivity
+        return {"status": "ok"}
+
+    return app
 
 
-@app.get("/api/alerts/trigger-test")
-def trigger_test_alerts():
-    import threading
-    threading.Thread(target=send_deadline_alerts, daemon=True).start()
-    return {"status": "triggered", "message": "Alert job running — check Render logs"}
+app = create_app()

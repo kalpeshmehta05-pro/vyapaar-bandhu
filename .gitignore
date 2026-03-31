@@ -6,3 +6,8 @@ __pycache__/
 dist/
 build/
 .DS_Store
+keys/
+*.pem
+models_cache/
+.venv/
+venv/
