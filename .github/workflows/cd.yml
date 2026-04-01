@@ -8,6 +8,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
