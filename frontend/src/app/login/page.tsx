@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, Mail, ArrowRight } from "lucide-react";
-import { api, setToken } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { LoginResponse } from "@/types";
 
 export default function LoginPage() {
@@ -19,11 +19,11 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await api.post<LoginResponse>("/auth/login", {
+      await api.post<LoginResponse>("/auth/login", {
         email,
         password,
       });
-      setToken(res.access_token);
+      // access_token is now set as httpOnly cookie by the backend
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Login failed");

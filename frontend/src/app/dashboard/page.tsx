@@ -238,7 +238,7 @@ export default function DashboardPage() {
                     total -
                     client.pending_ca_review_count -
                     client.flagged_low_confidence_count;
-                  const pct = Math.round((reviewed / total) * 100);
+                  const pct = Math.min(100, Math.max(0, Math.round((reviewed / Math.max(total, 1)) * 100)));
 
                   return (
                     <tr
@@ -293,7 +293,9 @@ export default function DashboardPage() {
                   className={`p-3 rounded-lg border text-sm ${
                     alert.severity === "red"
                       ? "bg-red-500/5 border-red-500/20 text-red-300"
-                      : "bg-yellow-500/5 border-yellow-500/20 text-yellow-300"
+                      : alert.severity === "green"
+                        ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] text-emerald-300"
+                        : "bg-yellow-500/5 border-yellow-500/20 text-yellow-300"
                   }`}
                 >
                   <div className="flex items-start gap-2">
@@ -301,7 +303,9 @@ export default function DashboardPage() {
                       className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
                         alert.severity === "red"
                           ? "bg-red-500 animate-pulse-dot"
-                          : "bg-yellow-500"
+                          : alert.severity === "green"
+                            ? "bg-emerald-500"
+                            : "bg-yellow-500"
                       }`}
                     />
                     <span>{alert.message}</span>

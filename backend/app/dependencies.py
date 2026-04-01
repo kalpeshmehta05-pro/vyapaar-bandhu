@@ -4,7 +4,7 @@ Async DB session + current CA authentication dependency.
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -14,23 +14,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_async_session
 from app.models.ca_account import CAAccount
 
-security = HTTPBearer()
+# auto_error=False so we can fall back to httpOnly cookie
+security = HTTPBearer(auto_error=False)
 
 # Type alias for convenience
 AsyncDB = Annotated[AsyncSession, Depends(get_async_session)]
 
 
 async def get_current_ca(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_async_session),
 ) -> CAAccount:
     """
     Decode JWT access token and return the authenticated CA account.
-    Raises 401 if token is invalid, expired, or CA is inactive.
+    Checks the Authorization header first, then falls back to the
+    httpOnly access_token cookie. Raises 401 if no valid token found.
     """
     from app.utils.crypto import decode_access_token
 
-    token = credentials.credentials
+    # Prefer Bearer header, fall back to httpOnly cookie
+    token: Optional[str] = None
+    if credentials:
+        token = credentials.credentials
+    else:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
     payload = decode_access_token(token)
 
     if payload is None:
