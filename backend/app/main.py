@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import settings
 from app.middleware.rate_limiter import limiter, rate_limit_exceeded_handler
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware.metrics import MetricsMiddleware, metrics_endpoint
 
 logger = structlog.get_logger()
 
@@ -118,6 +119,7 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(MetricsMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(CorrelationIDMiddleware)
 
@@ -125,15 +127,14 @@ def create_app() -> FastAPI:
     from app.api.v1.router import api_v1_router
     app.include_router(api_v1_router, prefix="/api/v1")
 
-    # ── Health checks ──────────────────────────────────────────────────
-    @app.get("/health/live", tags=["Health"])
-    async def liveness():
-        return {"status": "ok"}
+    # ── Health checks (registered at app level, not under /api/v1) ────
+    from app.api.v1.health import router as health_router
+    app.include_router(health_router, tags=["Health"])
 
-    @app.get("/health/ready", tags=["Health"])
-    async def readiness():
-        # TODO: Check DB + Redis connectivity
-        return {"status": "ok"}
+    # ── Prometheus metrics ────────────────────────────────────────────
+    @app.get("/metrics", tags=["Monitoring"])
+    async def metrics():
+        return metrics_endpoint()
 
     return app
 
