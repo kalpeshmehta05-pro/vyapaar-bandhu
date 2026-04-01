@@ -20,6 +20,7 @@ from app.schemas.summary import ITCSummaryResponse
 from app.services.compliance.gstin_state_mapper import get_state_from_gstin
 from app.utils.audit import write_audit_log
 from app.utils.phone import normalize_phone
+from app.utils.sanitize import sanitize_string
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -76,8 +77,8 @@ async def create_client(
     client = Client(
         ca_id=ca.id,
         whatsapp_phone=phone,
-        business_name=req.business_name.strip(),
-        owner_name=req.owner_name.strip(),
+        business_name=sanitize_string(req.business_name, max_length=200),
+        owner_name=sanitize_string(req.owner_name, max_length=200),
         gstin=req.gstin,
         business_type=req.business_type,
         primary_activity=req.primary_activity,

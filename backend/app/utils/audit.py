@@ -43,10 +43,12 @@ async def write_audit_log(
     This function must be called within an active DB transaction.
     """
     # Get the last row's hash for chain continuity
+    # SELECT ... FOR UPDATE serializes concurrent writes to prevent race conditions
     result = await db.execute(
         select(AuditLog.id, AuditLog.row_hash)
         .order_by(AuditLog.id.desc())
         .limit(1)
+        .with_for_update()
     )
     last_row = result.first()
 
