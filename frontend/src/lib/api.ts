@@ -1,35 +1,32 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return document.cookie
-    .split("; ")
-    .find((c) => c.startsWith("token="))
-    ?.split("=")[1] || localStorage.getItem("token");
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem("token", token);
-  document.cookie = `token=${token}; path=/; max-age=86400; SameSite=Strict`;
-}
+/**
+ * No client-side token storage. The access_token is set as an httpOnly
+ * cookie by the backend login endpoint and sent automatically via
+ * credentials: "include" on every request.
+ */
 
 export function clearToken(): void {
-  localStorage.removeItem("token");
-  document.cookie = "token=; path=/; max-age=0";
+  // Trigger server-side logout to clear httpOnly cookies
+  fetch(`${API_BASE}/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  }).catch(() => {});
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+    credentials: "include",
+  });
 
   if (res.status === 401) {
-    clearToken();
     if (typeof window !== "undefined") window.location.href = "/login";
     throw new Error("Unauthorized");
   }
