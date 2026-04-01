@@ -121,6 +121,17 @@ async def register(
     )
     await db.commit()
 
+    # Set access token as httpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=settings.APP_ENV != "development",
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRY,
+        path="/",
+    )
+
     # Set refresh token as httpOnly cookie
     response.set_cookie(
         key="refresh_token",
@@ -190,6 +201,17 @@ async def login(
         ip_address=client_ip,
     )
     await db.commit()
+
+    # Set access token as httpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=settings.APP_ENV != "development",
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRY,
+        path="/",
+    )
 
     response.set_cookie(
         key="refresh_token",
@@ -266,6 +288,17 @@ async def refresh(
     db.add(new_rt)
     await db.commit()
 
+    # Set access token as httpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=settings.APP_ENV != "development",
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRY,
+        path="/",
+    )
+
     response.set_cookie(
         key="refresh_token",
         value=new_raw,
@@ -307,6 +340,10 @@ async def logout(
             rt.revoked_at = datetime.now(timezone.utc)
             await db.commit()
 
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+    )
     response.delete_cookie(
         key="refresh_token",
         path="/api/v1/auth",

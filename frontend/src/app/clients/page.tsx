@@ -104,7 +104,7 @@ export default function ClientsPage() {
                         {client.whatsapp_phone}
                       </td>
                       <td className="p-4 flex justify-center">
-                        <ReadinessRing percentage={75} size={36} />
+                        <ReadinessRing percentage={Math.min(100, Math.max(0, client.gstr3b_readiness_percentage ?? 0))} size={36} />
                       </td>
                       <td className="p-4">
                         <ChevronRight

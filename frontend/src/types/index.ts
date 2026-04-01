@@ -56,6 +56,7 @@ export interface Client {
   business_type: string;
   is_active: boolean;
   created_at: string;
+  gstr3b_readiness_percentage?: number;
 }
 
 export interface Invoice {
