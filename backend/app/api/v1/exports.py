@@ -25,6 +25,7 @@ from app.models.invoice import Invoice
 from app.services.exports.gstr3b_builder import GSTR3BInput, build_gstr3b_json, _fmt
 from app.services.exports.pdf_generator import generate_filing_pdf
 from app.utils.audit import write_audit_log
+from app.middleware.rate_limiter import limiter
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -35,6 +36,7 @@ ZERO = Decimal("0.00")
 # ── GSTR-3B JSON Export ───────────────────────────────────────────────
 
 @router.get("/gstr3b")
+@limiter.limit("30/minute")
 async def export_gstr3b(
     ca: CurrentCA,
     db: AsyncSession = Depends(get_async_session),
@@ -99,6 +101,7 @@ async def export_gstr3b(
 # ── PDF Export ────────────────────────────────────────────────────────
 
 @router.get("/pdf")
+@limiter.limit("30/minute")
 async def export_pdf(
     ca: CurrentCA,
     db: AsyncSession = Depends(get_async_session),
@@ -192,6 +195,7 @@ async def export_pdf(
 # ── PDF Download (presigned URL only) ─────────────────────────────────
 
 @router.get("/pdf/download")
+@limiter.limit("30/minute")
 async def export_pdf_download(
     ca: CurrentCA,
     db: AsyncSession = Depends(get_async_session),
@@ -223,6 +227,7 @@ async def export_pdf_download(
 # ── Tally XML (stub) ─────────────────────────────────────────────────
 
 @router.get("/tally")
+@limiter.limit("30/minute")
 async def export_tally(
     ca: CurrentCA,
     client_id: uuid.UUID = Query(...),

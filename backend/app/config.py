@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     BCRYPT_ROUNDS: int = 12
     MIN_PASSWORD_LENGTH: int = 12
     CORS_ORIGINS: list[str] = Field(default=["http://localhost:3000"])
+    ALLOWED_ORIGINS: list[str] = Field(default=["http://localhost:3000"])
 
     # ── Compliance ─────────────────────────────────────────────────────
     ANOMALY_THRESHOLD_MULTIPLIER: float = 2.5

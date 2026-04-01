@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.session import get_async_session
+from app.middleware.rate_limiter import limiter
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -86,6 +87,7 @@ async def webhook_verify(
 
 
 @router.post("/webhook")
+@limiter.limit("100/minute")
 async def webhook_receive(
     request: Request,
     db: AsyncSession = Depends(get_async_session),

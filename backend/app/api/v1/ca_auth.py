@@ -32,6 +32,7 @@ from app.utils.crypto import (
     verify_password,
 )
 from app.utils.phone import normalize_phone
+from app.middleware.rate_limiter import limiter
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -156,6 +157,7 @@ async def register(
 # ── Login ─────────────────────────────────────────────────────────────
 
 @router.post("/login", response_model=CATokenResponse)
+@limiter.limit("5/minute")
 async def login(
     req: CALoginRequest,
     request: Request,

@@ -27,6 +27,7 @@ from app.schemas.invoice import (
 )
 from app.schemas.summary import BulkActionRequest, BulkActionResponse
 from app.utils.audit import write_audit_log
+from app.middleware.rate_limiter import limiter
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -43,6 +44,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 # ── Phase 3: Upload, Status, Raw endpoints ────────────────────────────
 
 @router.post("/upload", response_model=InvoiceUploadResponse, status_code=202)
+@limiter.limit("20/minute")
 async def upload_invoice(
     ca: CurrentCA,
     db: AsyncSession = Depends(get_async_session),
@@ -414,6 +416,7 @@ MAX_BULK_SIZE = 50
 
 
 @router.post("/bulk-action", response_model=BulkActionResponse)
+@limiter.limit("10/minute")
 async def bulk_action_invoices(
     req: BulkActionRequest,
     ca: CurrentCA,
